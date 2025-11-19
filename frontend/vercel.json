@@ -1,0 +1,13 @@
+{
+  "build": {
+    "buildCommand": "npm install && npm run build",
+    "outputDirectory": "dist"
+  },
+  "routes": [
+    {
+      "src": "/[^.]+",
+      "dest": "/",
+      "status": 200
+    }
+  ]
+}

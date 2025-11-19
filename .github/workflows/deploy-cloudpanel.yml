@@ -1,0 +1,165 @@
+name: Deploy to CloudPanel
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend to CloudPanel
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+    
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        npm ci --only=production
+    
+    - name: Create deployment package
+      run: |
+        cd backend
+        tar -czf ../backend-deploy.tar.gz \
+          --exclude='node_modules' \
+          --exclude='.env' \
+          --exclude='uploads' \
+          --exclude='.git' \
+          .
+    
+    - name: Deploy to CloudPanel via SCP
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: 122.176.25.162
+        username: apie-api-jobportal
+        password: ${{ secrets.CLOUDPANEL_PASSWORD }}
+        port: 22
+        source: "backend-deploy.tar.gz"
+        target: "/home/apie-api-jobportal/htdocs/"
+    
+    - name: Extract and setup backend via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: 122.176.25.162
+        username: apie-api-jobportal
+        password: ${{ secrets.CLOUDPANEL_PASSWORD }}
+        port: 22
+        script: |
+          cd /home/apie-api-jobportal/htdocs/api.jobportal.apie.tech
+          
+          # Backup current deployment
+          if [ -d "backup" ]; then rm -rf backup; fi
+          mkdir -p backup
+          cp -r * backup/ 2>/dev/null || true
+          
+          # Extract new deployment
+          tar -xzf /home/apie-api-jobportal/htdocs/backend-deploy.tar.gz -C /home/apie-api-jobportal/htdocs/api.jobportal.apie.tech/
+          
+          # Install dependencies
+          npm ci --only=production
+          
+          # Create necessary directories
+          mkdir -p uploads/profiles uploads/resumes uploads/documents
+          
+          # Setup PM2 if not installed
+          if ! command -v pm2 &> /dev/null; then
+            npm install -g pm2
+          fi
+          
+          # Restart application (using PM2)
+          pm2 restart job-portal-api || pm2 start server.js --name job-portal-api
+          pm2 save
+          
+          # Clean up
+          rm /home/apie-api-jobportal/htdocs/backend-deploy.tar.gz
+          
+          echo "Backend deployment completed successfully!"
+
+  deploy-frontend:
+    name: Deploy Frontend to CloudPanel
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+    
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+      env:
+        VITE_API_URL: https://api.jobportal.apie.tech
+    
+    - name: Deploy frontend to CloudPanel via SCP
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: 122.176.25.162
+        username: apie-api-jobportal
+        password: ${{ secrets.CLOUDPANEL_PASSWORD }}
+        port: 22
+        source: "frontend/dist/*"
+        target: "/home/apie-api-jobportal/htdocs/api.jobportal.apie.tech/"
+        strip_components: 2
+        rm: true
+    
+    - name: Setup .htaccess for SPA via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: 122.176.25.162
+        username: apie-api-jobportal
+        password: ${{ secrets.CLOUDPANEL_PASSWORD }}
+        port: 22
+        script: |
+          cd /home/apie-api-jobportal/htdocs/api.jobportal.apie.tech/
+          
+          # Create .htaccess for React SPA routing
+          cat > .htaccess << 'EOF'
+          <IfModule mod_rewrite.c>
+            RewriteEngine On
+            RewriteBase /
+            RewriteRule ^index\.html$ - [L]
+            RewriteCond %{REQUEST_FILENAME} !-f
+            RewriteCond %{REQUEST_FILENAME} !-d
+            RewriteRule . /index.html [L]
+          </IfModule>
+          EOF
+          
+          echo "Frontend deployment completed!"
+          ls -la /home/apie-api-jobportal/htdocs/api.jobportal.apie.tech/
+
+  notify:
+    name: Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    if: always()
+    
+    steps:
+    - name: Deployment Success
+      if: ${{ needs.deploy-backend.result == 'success' && needs.deploy-frontend.result == 'success' }}
+      run: |
+        echo "✅ Deployment successful!"
+        echo "Backend: https://api.jobportal.apie.tech"
+        echo "Frontend: https://jobportal.apie.tech"
+    
+    - name: Deployment Failed
+      if: ${{ needs.deploy-backend.result == 'failure' || needs.deploy-frontend.result == 'failure' }}
+      run: |
+        echo "❌ Deployment failed!"
+        exit 1
