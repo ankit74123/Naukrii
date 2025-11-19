@@ -1,8 +1,7 @@
 name: Complete Auto Deployment
 
 on:
-  push:
-    branches: [ main ]
+  # Temporarily disabled - using CloudPanel deployment instead
   workflow_dispatch:
 
 jobs:

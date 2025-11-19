@@ -1,8 +1,7 @@
 name: CD Pipeline - Staging
 
 on:
-  push:
-    branches: [ develop ]
+  # Temporarily disabled - requires AWS setup
   workflow_dispatch:
 
 env:

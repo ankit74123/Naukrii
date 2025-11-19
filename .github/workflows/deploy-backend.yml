@@ -1,8 +1,7 @@
 name: Auto Deploy to Render (Backend)
 
 on:
-  push:
-    branches: [ main, develop ]
+  # Temporarily disabled - using CloudPanel deployment instead
   workflow_dispatch:
 
 jobs:
